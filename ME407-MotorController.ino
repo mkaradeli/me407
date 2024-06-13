@@ -10,7 +10,10 @@ AF_Stepper motorY(STEPS_PER_REV, 2);
 #define endSwitchX 31
 #define endSwitchY 33
 
+#define readyPin 41
+#define commandPin 43
 
+#define DRIVING_METHOD DOUBLE
 
 #define exposureTime 1 // s 
 #define projectionWidth 3.1 // mm 
@@ -43,9 +46,13 @@ void setup() {
 
   pinMode(endSwitchX,INPUT_PULLUP);
   pinMode(endSwitchY,INPUT_PULLUP);
-
+  pinMode(readyPin,OUTPUT);
+  pinMode(commandPin,INPUT);
+  digitalWrite(readyPin,LOW);
 
   calibrate();
+  delay(100);
+  digitalWrite(readyPin,HIGH);
 
   loopThroughSubstrate();
 
@@ -54,30 +61,30 @@ void setup() {
 
 // Wrap step functions to allow angle recording
 void stepX(int stepCount,int direction) {
-  motorX.step(stepCount, direction,SINGLE);
+  motorX.step(stepCount, direction,DRIVING_METHOD);
   absoluteX += stepCount;
 }
 void stepY(int stepCount,int direction) {
-  motorY.step(stepCount, direction,SINGLE);
+  motorY.step(stepCount, direction,DRIVING_METHOD);
   absoluteY += stepCount;
 }
 
 
 void targetX(int targetStep) {
   if (targetStep - absoluteX > 0){
-    motorX.step(targetStep - absoluteX, FORWARD, SINGLE);
+    motorX.step(targetStep - absoluteX, FORWARD, DRIVING_METHOD);
   }
   else {
-    motorX.step(absoluteX - targetStep, BACKWARD, SINGLE);
+    motorX.step(absoluteX - targetStep, BACKWARD, DRIVING_METHOD);
   }
   absoluteX = targetStep;
 }
 void targetY(int targetStep) {
   if (targetStep - absoluteY > 0) {
-    motorY.step(targetStep - absoluteY, FORWARD, SINGLE);
+    motorY.step(targetStep - absoluteY, FORWARD, DRIVING_METHOD);
   }
   else {
-    motorY.step(absoluteY - targetStep, BACKWARD, SINGLE);
+    motorY.step(absoluteY - targetStep, BACKWARD, DRIVING_METHOD);
   }
   
   absoluteY = targetStep;
@@ -92,6 +99,12 @@ void moveTo(int targetZoneX, int targetZoneY){
 void loopThroughSubstrate() {
   while (zoneIndexY < zoneIndexYMax) {
     while (zoneIndexX < zoneIndexXMax) {
+      while (!digitalRead(commandPin)){
+        delay(50);
+      }
+      digitalWrite(readyPin,LOW);
+
+
       Serial.print("Moving to zone ");
       Serial.print(zoneIndexX);
       Serial.print(", ");
@@ -99,8 +112,9 @@ void loopThroughSubstrate() {
       moveTo(zoneIndexX,zoneIndexY);
 
       Serial.println("Exposing...");
-      delay(exposureTime * 1000);
+      //delay(exposureTime * 1000);
       zoneIndexX++;
+      digitalWrite(readyPin,HIGH);
     }
     zoneIndexX = 0;
     zoneIndexY++;
