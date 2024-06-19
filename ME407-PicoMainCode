@@ -139,8 +139,8 @@ def setup():
     print('Listening on', (wifi.radio.ipv4_address, 80))
 
     print("Stepper test!")
-    # calibrate() todo
-    # loopThroughSubstrate() todo
+    calibrate() 
+    loopThroughSubstrate()
 
     return server
 
