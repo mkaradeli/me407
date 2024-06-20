@@ -1,0 +1,162 @@
+import time
+import math
+import board
+import digitalio
+import pwmio
+from adafruit_motor import stepper
+import wifi
+import socketpool
+
+# Constants
+STEPS_PER_REV = 200  # steps per revolution
+EXPOSURE_TIME = 1  # seconds
+PROJECTION_WIDTH = 3.1  # mm
+PROJECTION_HEIGHT = 2.4  # mm
+TOTAL_WIDTH = 101.6  # mm
+LEAD_SCREW_PITCH = 2  # mm
+
+# Calculate maximum zone indices
+zoneIndexXMax = math.ceil(TOTAL_WIDTH / PROJECTION_WIDTH)
+zoneIndexYMax = math.ceil(TOTAL_WIDTH / PROJECTION_HEIGHT)
+
+# Calculate steps for projection width and height
+projectionWidthInSteps = int(PROJECTION_WIDTH * STEPS_PER_REV / LEAD_SCREW_PITCH)
+projectionHeightInSteps = int(PROJECTION_HEIGHT * STEPS_PER_REV / LEAD_SCREW_PITCH)
+
+# Initialize digital outputs for A4988 drivers
+dirX = digitalio.DigitalInOut(board.GP0)
+dirX.direction = digitalio.Direction.OUTPUT
+stepX = digitalio.DigitalInOut(board.GP1) 
+stepX.direction = digitalio.Direction.OUTPUT
+
+dirY = digitalio.DigitalInOut(board.GP2)
+dirY.direction = digitalio.Direction.OUTPUT
+stepY = digitalio.DigitalInOut(board.GP3)
+stepY.direction = digitalio.Direction.OUTPUT
+
+# Initialize end switches
+endSwitchX = digitalio.DigitalInOut(board.GP26)
+endSwitchX.direction = digitalio.Direction.INPUT
+endSwitchX.pull = digitalio.Pull.UP
+
+endSwitchY = digitalio.DigitalInOut(board.GP27) 
+endSwitchY.direction = digitalio.Direction.INPUT
+endSwitchY.pull = digitalio.Pull.UP
+
+# Global variables
+absoluteX = 0
+absoluteY = 0
+zoneIndexX = 0
+zoneIndexY = 0
+
+def stepX(stepCount, direction):
+    global absoluteX
+    dirX.value = direction
+    for _ in range(stepCount):
+        stepX.value = True
+        time.sleep(0.001)
+        stepX.value = False
+        time.sleep(0.001)
+    absoluteX += stepCount if direction == 1 else -stepCount
+
+def stepY(stepCount, direction):
+    global absoluteY
+    dirY.value = direction
+    for _ in range(stepCount):
+        stepY.value = True
+        time.sleep(0.001)
+        stepY.value = False
+        time.sleep(0.001)
+    absoluteY += stepCount if direction == 1 else -stepCount
+
+def targetX(targetStep):
+    global absoluteX
+    if targetStep > absoluteX:
+        stepX(targetStep - absoluteX, 1)
+    else:
+        stepX(absoluteX - targetStep, 0)
+    absoluteX = targetStep
+
+def targetY(targetStep):
+    global absoluteY
+    if targetStep > absoluteY:
+        stepY(targetStep - absoluteY, 1)
+    else:
+        stepY(absoluteY - targetStep, 0)
+    absoluteY = targetStep
+
+def moveTo(targetZoneX, targetZoneY):
+    targetX(targetZoneX * projectionWidthInSteps)
+    targetY(targetZoneY * projectionHeightInSteps)
+
+def loopThroughSubstrate():
+    global zoneIndexX, zoneIndexY
+    while zoneIndexY < zoneIndexYMax:
+        while zoneIndexX < zoneIndexXMax:
+            print(f"Moving to zone {zoneIndexX}, {zoneIndexY}")
+            moveTo(zoneIndexX, zoneIndexY)
+            print("Exposing...")
+            time.sleep(EXPOSURE_TIME)
+            zoneIndexX += 1
+        zoneIndexX = 0
+        zoneIndexY += 1
+
+def calibrate():
+    global absoluteX, absoluteY
+    # Calibrate X axis
+    print("Calibrating X until end switch is triggered.")
+    while endSwitchX.value:
+        stepX(10, 0)
+    print("End switch is triggered, setting absolute angle to 0")
+    absoluteX = 0
+
+    # Calibrate Y axis  
+    print("Calibrating Y until end switch is triggered.")
+    while endSwitchY.value:
+        stepY(10, 0)
+    print("End switch is triggered, setting absolute angle to 0")
+    absoluteY = 0
+
+def setup():
+    # Connect to WiFi
+    ssid = 'POCO X5 5G Sait'
+    password = 'ekmekkadayifi'
+
+    print("Connecting to WiFi...")
+    wifi.radio.connect(ssid, password)
+    print("Connected to WiFi:", wifi.radio.ipv4_address)
+
+    # Create a socket server
+    pool = socketpool.SocketPool(wifi.radio)
+    server = pool.socket(pool.AF_INET, pool.SOCK_STREAM)
+    server.bind(('0.0.0.0', 80))
+    server.listen(1)
+    print('Listening on', (wifi.radio.ipv4_address, 80))
+
+    print("Stepper test!")
+    calibrate()
+    loopThroughSubstrate()
+
+    return server
+
+# Run the setup function
+server = setup()
+
+# The loop function runs over and over again forever
+while True:
+    try:
+        print("Waiting for connection...")
+        client, addr = server.accept()
+        print('Client connected from', addr)
+
+        with client:
+            buffer = bytearray(1024)
+            while True:
+                num_bytes = client.recv_into(buffer)
+                if num_bytes == 0:
+                    break
+                command = str(buffer[:num_bytes], 'utf-8')
+                print('Received command:', command)
+
+    except OSError as e:
+        print('Connection closed')
